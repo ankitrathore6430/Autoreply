@@ -293,24 +293,26 @@ async def main() -> None:
         if is_bulk_messaging:
             await client.send_message(chat_id, "⚠️ **A bulk message is already in progress.** Please wait for it to finish or send `/bulkmsg stop` to stop it.", parse_mode='md')
             return
-
-        if not subcommand and command_text:
-            # Default case: /bulkmsg <message> -> Send to all users
-            message_to_send = command_text
-            users_to_message = list(all_fetched_users.union(auto_replied_users))
-            await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from both lists...**", parse_mode='md')
-        elif subcommand == "bot":
-            # /bulkmsg bot <message> -> Send to auto-reply users
-            message_to_send = parts[1] if len(parts) > 1 else ""
-            users_to_message = list(auto_replied_users.copy())
-            await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `auto-reply.txt`...**", parse_mode='md')
-        elif subcommand == "all":
-            # /bulkmsg all <message> -> Send to all fetched users
-            message_to_send = parts[1] if len(parts) > 1 else ""
-            users_to_message = list(all_fetched_users.copy())
-            await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `users.txt`...**", parse_mode='md')
+        
+        # This is the corrected parsing logic
+        if command_text:
+            if subcommand == "bot":
+                # /bulkmsg bot <message> -> Send to auto-reply users
+                message_to_send = parts[1] if len(parts) > 1 else ""
+                users_to_message = list(auto_replied_users.copy())
+                await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `auto-reply.txt`...**", parse_mode='md')
+            elif subcommand == "all":
+                # /bulkmsg all <message> -> Send to all fetched users
+                message_to_send = parts[1] if len(parts) > 1 else ""
+                users_to_message = list(all_fetched_users.copy())
+                await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `users.txt`...**", parse_mode='md')
+            else:
+                # Default case: /bulkmsg <message> -> Send to all users
+                message_to_send = command_text
+                users_to_message = list(all_fetched_users.union(auto_replied_users))
+                await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from both lists...**", parse_mode='md')
         else:
-            await client.send_message(chat_id, "⚠️ **Invalid bulk message command format.**", parse_mode='md')
+            await client.send_message(chat_id, "⚠️ **Invalid bulk message command format. Please provide a message or a subcommand.**", parse_mode='md')
             return
         
         if not users_to_message:
