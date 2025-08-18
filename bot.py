@@ -177,11 +177,13 @@ async def main() -> None:
             "*Example:* `/setbulkmsgdelay 30`\n\n"
             "**📥 Fetch Users**\n"
             "`/fetchusers` - Fetches all users into `users.txt`.\n"
-            "`/fetchusers bot` - Fetches only users the bot has auto-replied to into `auto-reply.txt`.\n"
             "`/fetchusers last <number>h` - Fetches users active in the last X hours into `users.txt`.\n"
             "`/fetchusers last <number>d` - Fetches users active in the last X days into `users.txt`.\n"
             "`/fetchusers last <number>m` - Fetches users active in the last X months into `users.txt`.\n"
             "`/fetchusers stop` - Stops an ongoing fetch.\n\n"
+            "**🔄 Import/Export Users**\n"
+            "`/exportusers` - Sends you the `users.txt` and `auto-reply.txt` files.\n"
+            "`/importusers <all|bot>` - Reply to a `.txt` file to add user IDs to the specified list.\n\n"
             "**🗑️ Remove Saved Users**\n"
             "`/removefetchusers` - Deletes the `users.txt` file.\n"
             "`/removeautoreplyusers` - Deletes the `auto-reply.txt` file.\n\n"
@@ -209,6 +211,7 @@ async def main() -> None:
 
         if replied_msg and replied_msg.media:
             final_caption = new_caption if new_caption else replied_msg.text
+            final_caption = f"**{final_caption}**"
 
             AUTO_REPLY_MEDIA_INFO = {
                 'chat_id': replied_msg.chat_id,
@@ -220,10 +223,10 @@ async def main() -> None:
             await client.send_message(chat_id, "✅ **Auto-reply updated to the specified media and caption.**", parse_mode='md')
         
         elif new_caption:
-            AUTO_REPLY_TEXT = new_caption
+            AUTO_REPLY_TEXT = f"**{new_caption}**"
             AUTO_REPLY_MEDIA_INFO = None
-            logger.info("Auto-reply message changed to: %s", new_caption)
-            await client.send_message(chat_id, f"✅ **Auto-reply message updated to:**\n\n{new_caption}", parse_mode='md')
+            logger.info("Auto-reply message changed to: %s", AUTO_REPLY_TEXT)
+            await client.send_message(chat_id, f"✅ **Auto-reply message updated to:**\n\n{AUTO_REPLY_TEXT}", parse_mode='md')
         else:
             await client.send_message(chat_id, 
                 "⚠️ **Usage:**\n"
@@ -294,20 +297,18 @@ async def main() -> None:
             await client.send_message(chat_id, "⚠️ **A bulk message is already in progress.** Please wait for it to finish or send `/bulkmsg stop` to stop it.", parse_mode='md')
             return
         
-        # This is the corrected parsing logic
-        if command_text:
+        # Corrected parsing and logic flow
+        if command_text or replied_msg:
             if subcommand == "bot":
-                # /bulkmsg bot <message> -> Send to auto-reply users
                 message_to_send = parts[1] if len(parts) > 1 else ""
                 users_to_message = list(auto_replied_users.copy())
                 await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `auto-reply.txt`...**", parse_mode='md')
             elif subcommand == "all":
-                # /bulkmsg all <message> -> Send to all fetched users
                 message_to_send = parts[1] if len(parts) > 1 else ""
                 users_to_message = list(all_fetched_users.copy())
                 await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from `users.txt`...**", parse_mode='md')
             else:
-                # Default case: /bulkmsg <message> -> Send to all users
+                # Default case: /bulkmsg <message> or /bulkmsg (replying)
                 message_to_send = command_text
                 users_to_message = list(all_fetched_users.union(auto_replied_users))
                 await client.send_message(chat_id, f"📢 **Sending bulk message to {len(users_to_message)} users from both lists...**", parse_mode='md')
@@ -319,9 +320,22 @@ async def main() -> None:
             await client.send_message(chat_id, "⚠️ **No users to bulk message to.**", parse_mode='md')
             return
 
-        if not message_to_send and not replied_msg:
+        # Check for message content before applying formatting
+        final_caption = ""
+        if replied_msg and replied_msg.media:
+            # If replying to media, the caption is either the new text or the original caption
+            final_caption = message_to_send if message_to_send else replied_msg.text
+        elif message_to_send:
+            # If it's a text-only message
+            final_caption = message_to_send
+        
+        if not final_caption and not (replied_msg and replied_msg.media):
              await client.send_message(chat_id, "⚠️ **Usage:** Provide a message or reply to a media file.", parse_mode='md')
              return
+
+        # **THE FIX**: Automatically wrap the final text/caption in bold markdown
+        if final_caption:
+            final_caption = f"**{final_caption}**"
 
         is_bulk_messaging = True
         
@@ -337,11 +351,11 @@ async def main() -> None:
                     await client.send_file(
                         user_id,
                         replied_msg.media,
-                        caption=message_to_send if message_to_send else replied_msg.text,
+                        caption=final_caption,
                         parse_mode='md'
                     )
                 else:
-                    await client.send_message(user_id, message_to_send, parse_mode='md')
+                    await client.send_message(user_id, final_caption, parse_mode='md')
                 success_count += 1
                 await asyncio.sleep(BROADCAST_DELAY_S)
             except Exception as e:
@@ -473,6 +487,94 @@ async def main() -> None:
         await client.send_message(chat_id, status_message +
                            f"Found and saved **{fetched_count}** new user IDs.\n"
                            f"Total users stored: **{len(target_set)}**.", parse_mode='md')
+
+    @client.on(events.NewMessage(pattern=r"/importusers(?: |$)(.*)"))
+    async def import_users_handler(event: events.NewMessage.Event) -> None:
+        if not event.is_private or event.sender_id not in ADMIN_IDS:
+            return
+
+        chat_id = event.chat_id
+        try:
+            await event.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete command message: {e}")
+
+        replied_msg = await event.get_reply_message()
+        subcommand = event.pattern_match.group(1).strip().lower()
+
+        if not replied_msg or not replied_msg.document:
+            await client.send_message(chat_id, "⚠️ **Usage:** Reply to a `.txt` file containing user IDs and use `/importusers <all|bot>`.", parse_mode='md')
+            return
+
+        if subcommand not in ["all", "bot"]:
+            await client.send_message(chat_id, "⚠️ **Please specify the target list.** Use `/importusers all` or `/importusers bot`.", parse_mode='md')
+            return
+
+        target_file = ALL_USERS_FILE if subcommand == "all" else AUTO_REPLY_USERS_FILE
+        target_set = all_fetched_users if subcommand == "all" else auto_replied_users
+
+        await client.send_message(chat_id, f"📥 **Importing users into `{target_file}`...**", parse_mode='md')
+        
+        file_path = await client.download_media(replied_msg.media)
+        
+        imported_count = 0
+        duplicate_count = 0
+        invalid_count = 0
+        
+        try:
+            with open(file_path, "r") as f:
+                for line in f:
+                    try:
+                        user_id = int(line.strip())
+                        if user_id not in target_set:
+                            save_user_id(user_id, target_file, target_set)
+                            imported_count += 1
+                        else:
+                            duplicate_count += 1
+                    except ValueError:
+                        invalid_count += 1
+                        continue
+        except Exception as e:
+            await client.send_message(chat_id, f"❌ **Error reading file:** {e}", parse_mode='md')
+            return
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        await client.send_message(
+            chat_id,
+            "✅ **Import complete.**\n\n"
+            f"**New users added:** {imported_count}\n"
+            f"**Duplicates skipped:** {duplicate_count}\n"
+            f"**Invalid entries:** {invalid_count}\n"
+            f"**Total users in `{target_file}`:** {len(target_set)}",
+            parse_mode='md'
+        )
+
+    @client.on(events.NewMessage(pattern="/exportusers"))
+    async def export_users_handler(event: events.NewMessage.Event) -> None:
+        if not event.is_private or event.sender_id not in ADMIN_IDS:
+            return
+        
+        chat_id = event.chat_id
+        try:
+            await event.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete command message: {e}")
+
+        await client.send_message(chat_id, "📤 **Exporting user lists...**", parse_mode='md')
+
+        files_sent = False
+        if os.path.exists(ALL_USERS_FILE):
+            await client.send_file(chat_id, ALL_USERS_FILE, caption=f"All fetched users from `{ALL_USERS_FILE}`.")
+            files_sent = True
+        
+        if os.path.exists(AUTO_REPLY_USERS_FILE):
+            await client.send_file(chat_id, AUTO_REPLY_USERS_FILE, caption=f"Auto-replied users from `{AUTO_REPLY_USERS_FILE}`.")
+            files_sent = True
+
+        if not files_sent:
+            await client.send_message(chat_id, "⚠️ **No user files found to export.**", parse_mode='md')
 
     @client.on(events.NewMessage(pattern="/removefetchusers"))
     async def remove_fetchusers_handler(event: events.NewMessage.Event) -> None:
