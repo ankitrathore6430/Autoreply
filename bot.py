@@ -4,10 +4,12 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from telethon import TelegramClient, events
 from telethon.tl.types import PeerUser
 from flask import Flask, jsonify
 from waitress import serve
+from collections import deque
 
 # --- Setup logging ---
 logging.basicConfig(
@@ -46,6 +48,11 @@ all_fetched_users: set[int] = set()
 AUTO_REPLY_ENABLED = True
 is_bulk_messaging = False
 is_fetching_users = False
+
+# --- Analytics Tracking ---
+new_users_timestamps: list[float] = []
+auto_replies_timestamps: list[float] = []
+broadcast_history = deque(maxlen=5) # Store last 5 broadcasts
 
 # --- Flask Web Server Setup ---
 app = Flask(__name__)
@@ -86,6 +93,9 @@ def save_user_id(user_id: int, filename: str, user_set: set[int]) -> None:
         with open(filename, "a") as f:
             f.write(f"{user_id}\n")
         user_set.add(user_id)
+        # --- Analytics ---
+        new_users_timestamps.append(time.time())
+        # ---
         logger.info(f"Saved new user_id {user_id} to file {filename}.")
 
 async def main() -> None:
@@ -111,7 +121,7 @@ async def main() -> None:
             return
 
         sender = await event.get_sender()
-        if sender and sender.bot:
+        if sender and (sender.bot or sender.deleted):
             return
 
         uid = event.sender_id
@@ -141,6 +151,9 @@ async def main() -> None:
                 await event.reply(AUTO_REPLY_TEXT, parse_mode='md')
             
             last_replied[uid] = now
+            # --- Analytics ---
+            auto_replies_timestamps.append(now)
+            # ---
             logger.info("Auto-replied to user_id=%s", uid)
         except Exception as e:
             logger.exception("Failed to send auto-reply: %s", e)
@@ -160,38 +173,114 @@ async def main() -> None:
         
         help_message = (
             "Hello! Here are the commands you can use:\n\n"
+            "**📊 Bot Status**\n"
+            "/botstatus - View bot analytics and current settings.\n\n"
             "**✍️ Change Reply Message**\n"
-            "`/setreply <your new message>`\n"
-            "*(Or reply to a photo, video, or document with /setreply and an optional new caption)*\n\n"
+            "/setreply <your new message>\n"
+            "**(Or reply to a photo, video, or document with /setreply and an optional new caption)**\n\n"
             "**⏱️ Change Cooldown Time**\n"
-            "`/setcooldown <time_in_seconds>`\n"
-            "*Example:* `/setcooldown 600` (for 10 minutes)\n\n"
+            "/setcooldown <time_in_seconds>\n"
+            "**Example:** `/setcooldown 600` (for 10 minutes)\n\n"
             "**📢 Bulk Message**\n"
-            "`/bulkmsg <your message>` - Sends a message to ALL users (both lists).\n"
+            "/bulkmsg <your message> - Sends a message to ALL users (both lists).\n"
             "`/bulkmsg bot <message>` - Sends a message to users in `auto-reply.txt`.\n"
             "`/bulkmsg all <message>` - Sends a message to users in `users.txt`.\n"
             "`/bulkmsg stop` - Stops an ongoing bulk message.\n"
-            "*(Or reply to a photo/video/document with /bulkmsg and an optional new caption)*\n\n"
+            "**(Or reply to a photo/video/document with /bulkmsg and an optional new caption)**\n\n"
             "**⏱️ Change Bulk Message Delay**\n"
-            "`/setbulkmsgdelay <time_in_seconds>`\n"
-            "*Example:* `/setbulkmsgdelay 30`\n\n"
+            "/setbulkmsgdelay <time_in_seconds>\n"
+            "**Example:** `/setbulkmsgdelay 30`\n\n"
             "**📥 Fetch Users**\n"
-            "`/fetchusers` - Fetches all users into `users.txt`.\n"
+            "/fetchusers - Fetches all users into `users.txt`.\n"
             "`/fetchusers last <number>h` - Fetches users active in the last X hours into `users.txt`.\n"
             "`/fetchusers last <number>d` - Fetches users active in the last X days into `users.txt`.\n"
             "`/fetchusers last <number>m` - Fetches users active in the last X months into `users.txt`.\n"
             "`/fetchusers stop` - Stops an ongoing fetch.\n\n"
             "**🔄 Import/Export Users**\n"
-            "`/exportusers` - Sends you the `users.txt` and `auto-reply.txt` files.\n"
-            "`/importusers <all|bot>` - Reply to a `.txt` file to add user IDs to the specified list.\n\n"
+            "/exportusers - Sends you the `users.txt` and `auto-reply.txt` files.\n"
+            "/importusers <all|bot> - Reply to a `.txt` file to add user IDs to the specified list.\n\n"
             "**🗑️ Remove Saved Users**\n"
-            "`/removefetchusers` - Deletes the `users.txt` file.\n"
+            "/removefetchusers - Deletes the `users.txt` file.\n"
             "`/removeautoreplyusers` - Deletes the `auto-reply.txt` file.\n\n"
             "**⏺️ Auto-reply Control**\n"
-            "`/stopreply` - Stops the bot's auto-reply function.\n"
-            "`/restartreply` - Restarts the bot's auto-reply function."
+            "/stopreply - Stops the bot's auto-reply function.\n"
+            "/restartreply - Restarts the bot's auto-reply function."
         )
         await client.send_message(chat_id, help_message, parse_mode='md')
+    
+    @client.on(events.NewMessage(pattern="/botstatus"))
+    async def botstatus_handler(event: events.NewMessage.Event) -> None:
+        if not event.is_private or event.sender_id not in ADMIN_IDS:
+            return
+        
+        chat_id = event.chat_id
+        try:
+            await event.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete command message: {e}")
+
+        now = time.time()
+        twenty_four_hours_ago = now - (24 * 60 * 60)
+
+        # --- Calculate Analytics ---
+        new_users_24h = sum(1 for ts in new_users_timestamps if ts > twenty_four_hours_ago)
+        auto_replies_24h = sum(1 for ts in auto_replies_timestamps if ts > twenty_four_hours_ago)
+        
+        total_broadcasts = len(broadcast_history)
+        last_broadcast_stats_str = "N/A"
+        if broadcast_history:
+            last_broadcast = broadcast_history[-1]
+            last_broadcast_stats_str = f"{last_broadcast['success']} Success, {last_broadcast['failed']} Failed"
+        
+        recent_broadcasts_str = "No recent broadcasts."
+        if broadcast_history:
+            recent_broadcasts_list = []
+            for bc in reversed(broadcast_history):
+                # Convert timestamp to timezone-aware datetime object in UTC, then to IST
+                utc_dt = datetime.fromtimestamp(bc['timestamp'], tz=timezone.utc)
+                ist_dt = utc_dt.astimezone(ZoneInfo("Asia/Kolkata"))
+                time_str = ist_dt.strftime("%I:%M:%S %p, %d-%m-%Y")
+                recent_broadcasts_list.append(
+                    f"• At {time_str}: {bc['success']} Success, {bc['failed']} failed"
+                )
+            recent_broadcasts_str = "\n".join(recent_broadcasts_list)
+
+        auto_reply_status = "✅ Enabled" if AUTO_REPLY_ENABLED else "❌ Disabled"
+
+        current_reply_message = ""
+        if AUTO_REPLY_MEDIA_INFO:
+            caption = AUTO_REPLY_MEDIA_INFO.get('caption', 'No caption')
+            current_reply_message = f"🖼️ **Media Message**\n_Caption:_ {caption}"
+        elif AUTO_REPLY_TEXT:
+            current_reply_message = AUTO_REPLY_TEXT
+        else:
+            current_reply_message = "Not set."
+
+        # --- Format the message ---
+        status_message = f"""
+Bot Status & Analytics
+
+• Total Users (`users.txt`): {len(all_fetched_users)}
+• Total Users (`auto-reply.txt`): {len(auto_replied_users)}
+
+📊 Performance (Last 24h)
+• Total New Users: {new_users_24h}
+• Auto-Replies Sent: {auto_replies_24h}
+• Total Broadcasts: {total_broadcasts}
+• Last Broadcast: {last_broadcast_stats_str}
+
+📢 Recent Broadcasts
+{recent_broadcasts_str}
+
+⚙️ Current Settings
+• Auto-Reply Status: {auto_reply_status}
+• Reply Cooldown: {REPLY_COOLDOWN_S} seconds
+• Bulk Message Delay: {BROADCAST_DELAY_S} seconds
+
+✉️ Current Auto-Reply Message
+{current_reply_message}
+"""
+        await client.send_message(chat_id, status_message, parse_mode='md')
 
     @client.on(events.NewMessage(pattern=r"(?s)/setreply(?: |$)(.*)"))
     async def set_reply_handler(event: events.NewMessage.Event) -> None:
@@ -333,7 +422,7 @@ async def main() -> None:
              await client.send_message(chat_id, "⚠️ **Usage:** Provide a message or reply to a media file.", parse_mode='md')
              return
 
-        # **THE FIX**: Automatically wrap the final text/caption in bold markdown
+        # Automatically wrap the final text/caption in bold markdown
         if final_caption:
             final_caption = f"**{final_caption}**"
 
@@ -363,6 +452,16 @@ async def main() -> None:
                 fail_count += 1
         
         is_bulk_messaging = False
+        
+        # --- Analytics ---
+        broadcast_info = {
+            "timestamp": time.time(),
+            "success": success_count,
+            "failed": fail_count
+        }
+        broadcast_history.append(broadcast_info)
+        # ---
+
         status_message = f"✅ **Bulk message complete.**\n\n" if success_count + fail_count == len(users_to_message) else f"❌ **Bulk message stopped.**\n\n"
         await client.send_message(chat_id, status_message +
                            f"**Success:** {success_count}\n"
@@ -467,15 +566,14 @@ async def main() -> None:
         
         is_fetching_users = True
         fetched_count = 0
-        target_set.clear()
 
         async for dialog in client.iter_dialogs():
             if not is_fetching_users:
                 logger.info("User fetching was stopped by admin.")
                 break
             
-            # Apply filter only if cutoff_time is set
-            if dialog.is_user and (cutoff_time is None or dialog.date > cutoff_time):
+            # **FIXED**: Added 'and not dialog.entity.deleted' to exclude deleted accounts
+            if dialog.is_user and not dialog.entity.bot and not dialog.entity.deleted and (cutoff_time is None or dialog.date > cutoff_time):
                 user_id = dialog.entity.id
                 if user_id not in target_set:
                     save_user_id(user_id, target_file, target_set)
