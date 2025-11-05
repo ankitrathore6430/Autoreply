@@ -49,7 +49,7 @@
             color: #444;
             margin-top: 15px;
         }
-        textarea, select, input[type="number"], input[type="password"] {
+        textarea, select, input[type="number"], input[type="password"], input[type="text"] {
             width: 100%;
             padding: 12px;
             box-sizing: border-box; 
@@ -77,6 +77,7 @@
             box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
         }
         button:hover { background-color: #388e3c; transform: translateY(-2px); }
+        .auth-button { margin-top: 10px !important; }
 
         #status-message {
             margin-top: 20px;
@@ -88,6 +89,7 @@
         }
         .success { background-color: #e8f5e9; color: #388e3c; border: 1px solid #c8e6c9; }
         .error { background-color: #ffebee; color: #d32f2f; border: 1px solid #ffcdd2; }
+        .info { background-color: #e3f2fd; color: #1e88e5; border: 1px solid #bbdefb; }
         
         .hint { font-size: 13px; color: #757575; margin-top: -8px; margin-bottom: 15px;}
         
@@ -172,6 +174,29 @@
         <p class="hint">यह वह लिस्ट है जिसे ऑटो-ब्लॉगर इस्तेमाल करेगा। लिस्ट खत्म होने पर यह रीसेट हो सकती है।</p>
 
         <button onclick="saveConfiguration()">💾 कॉन्फ़िगरेशन सेव करें और GitHub पर अपलोड करें</button>
+        
+        <hr style="margin-top: 30px; border: 0; border-top: 1px solid var(--border-color);">
+
+        <h2>🔑 Blogger OAuth 2.0 Token Generator (Zapier Style)</h2>
+        <p><b>यह एक बार की प्रक्रिया है।</b> यह बटन Google लॉगिन खोलेगा, अनुमति मांगेगा, और सफलतापूर्वक अनुमति मिलने पर आपको Refresh Token देगा। इस Refresh Token को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** में सेव करें।</p>
+
+        <div class="form-group">
+            <label for="client_id">Google Client ID:</label>
+            <input type="text" id="client_id" placeholder="Enter your Google Client ID" value="185826498092-51rjs9rlhpadfqtc6tsjv5hijcper0ah.apps.googleusercontent.com">
+        </div>
+        <div class="form-group">
+            <label for="client_secret">Google Client Secret:</label>
+            <input type="text" id="client_secret" placeholder="Enter your Google Client Secret" value="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">
+        </div>
+        <button id="auth-button" class="btn btn-primary auth-button">1. Authorize Blogger Access</button>
+
+        <div class="token-result" style="margin-top: 20px;">
+            <h3>Generated Refresh Token:</h3>
+            <textarea id="refresh_token_output" rows="3" readonly placeholder="Your Refresh Token will appear here..."></textarea>
+            <p style="color: red; font-weight: bold;">⚠️ इस टोकन को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** नाम से सेव करें।</p>
+            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
+        </div>
+
 
         <div id="status-message"></div>
     </div>
@@ -345,8 +370,99 @@
                 statusDiv.style.display = 'none';
             }, 8000); 
         }
+        
+        // --- OAuth 2.0 Flow Functions ---
 
-        window.onload = loadConfigToForm;
+        // 1. Redirect to Google Login
+        document.getElementById('auth-button').addEventListener('click', () => {
+            const clientId = document.getElementById('client_id').value;
+            const secret = document.getElementById('client_secret').value;
+            
+            if (!clientId || !secret) {
+                showMessage("error", "❌ Client ID and Secret are required.");
+                return;
+            }
+            
+            // Save to local storage for the next step (exchange code)
+            localStorage.setItem('oauth_client_id', clientId);
+            localStorage.setItem('oauth_client_secret', secret);
+            
+            // NOTE: The redirect URI used here must match an Authorized redirect URI in Google Console.
+            // For GitHub Pages, this is typically your repo URL: 
+            const redirectUri = window.location.href.split('?')[0]; 
+            const scope = 'https://www.googleapis.com/auth/blogger';
+            
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
+                            `client_id=${clientId}&` +
+                            `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+                            `response_type=code&` +
+                            `scope=${encodeURIComponent(scope)}&` +
+                            `access_type=offline&` + // CRITICAL: This ensures we get a Refresh Token
+                            `prompt=consent`; // CRITICAL: Ensures refresh token is issued every time
+                            
+            window.location.href = authUrl;
+        });
+
+        // 2. Exchange 'code' for 'refresh_token'
+        function handleOAuthCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            
+            if (code) {
+                const clientId = localStorage.getItem('oauth_client_id');
+                const clientSecret = localStorage.getItem('oauth_client_secret');
+                const redirectUri = window.location.href.split('?')[0]; // Current URL without query params
+                
+                if (!clientId || !clientSecret) {
+                    showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
+                    return;
+                }
+                
+                showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
+
+                const tokenUrl = 'https://oauth2.googleapis.com/token';
+                const data = new URLSearchParams();
+                data.append('client_id', clientId);
+                data.append('client_secret', clientSecret);
+                data.append('code', code);
+                data.append('grant_type', 'authorization_code');
+                data.append('redirect_uri', redirectUri);
+
+                fetch(tokenUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: data
+                })
+                .then(response => response.json())
+                .then(tokenData => {
+                    if (tokenData.refresh_token) {
+                        document.getElementById('refresh_token_output').value = tokenData.refresh_token;
+                        showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
+                    } else if (tokenData.error) {
+                        showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
+                        console.error("Token Error:", tokenData);
+                    } else {
+                        showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
+                    }
+                })
+                .catch(error => {
+                    showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
+                });
+                
+                // Clean up URL and local storage after processing
+                window.history.replaceState({}, document.title, redirectUri);
+                localStorage.removeItem('oauth_client_id');
+                localStorage.removeItem('oauth_client_secret');
+            }
+        }
+
+        // Call callback handler on page load
+        window.onload = function() {
+            loadConfigToForm();
+            handleOAuthCallback();
+        };
     </script>
 </body>
 </html>
