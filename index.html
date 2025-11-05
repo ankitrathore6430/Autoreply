@@ -194,7 +194,7 @@
             <h3>Generated Refresh Token:</h3>
             <textarea id="refresh_token_output" rows="3" readonly placeholder="Your Refresh Token will appear here..."></textarea>
             <p style="color: red; font-weight: bold;">⚠️ इस टोकन को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** नाम से सेव करें।</p>
-            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
+            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL (`https://ankitrathore6430.github.io/Autoreply/`) Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
         </div>
 
 
@@ -204,7 +204,8 @@
     <script>
         // --- कॉन्फ़िगरेशन (यह कोड आपकी GitHub जानकारी का उपयोग करेगा) ---
         const REPO_OWNER = 'ankitrathore6430'; 
-        const REPO_NAME = 'Auto-Blogger'; 
+        // ✅ UPDATED: New repository name
+        const REPO_NAME = 'AutoBloggerAnkit'; 
         const FILE_PATH = 'config.json';
         const BRANCH = 'main'; 
 
@@ -388,7 +389,6 @@
             localStorage.setItem('oauth_client_secret', secret);
             
             // NOTE: The redirect URI used here must match an Authorized redirect URI in Google Console.
-            // For GitHub Pages, this is typically your repo URL: 
             const redirectUri = window.location.href.split('?')[0]; 
             const scope = 'https://www.googleapis.com/auth/blogger';
             
@@ -409,59 +409,75 @@
             const code = urlParams.get('code');
             
             if (code) {
-                const clientId = localStorage.getItem('oauth_client_id');
-                const clientSecret = localStorage.getItem('oauth_client_secret');
-                const redirectUri = window.location.href.split('?')[0]; // Current URL without query params
+                // If the code is present, remove it from the URL to prevent re-exchange on refresh
+                const redirectUri = window.location.href.split('?')[0]; 
+                window.history.replaceState({}, document.title, redirectUri);
+                
+                let clientId = localStorage.getItem('oauth_client_id');
+                let clientSecret = localStorage.getItem('oauth_client_secret');
                 
                 if (!clientId || !clientSecret) {
-                    showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
-                    return;
+                    // Fallback to pre-filled values if local storage is cleared
+                    clientId = document.getElementById('client_id').value;
+                    clientSecret = document.getElementById('client_secret').value;
+                    
+                    if (!clientId || !clientSecret) {
+                        showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
+                        return;
+                    }
                 }
                 
-                showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
-
-                const tokenUrl = 'https://oauth2.googleapis.com/token';
-                const data = new URLSearchParams();
-                data.append('client_id', clientId);
-                data.append('client_secret', clientSecret);
-                data.append('code', code);
-                data.append('grant_type', 'authorization_code');
-                data.append('redirect_uri', redirectUri);
-
-                fetch(tokenUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    body: data
-                })
-                .then(response => response.json())
-                .then(tokenData => {
-                    if (tokenData.refresh_token) {
-                        document.getElementById('refresh_token_output').value = tokenData.refresh_token;
-                        showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
-                    } else if (tokenData.error) {
-                        showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
-                        console.error("Token Error:", tokenData);
-                    } else {
-                        showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
-                    }
-                })
-                .catch(error => {
-                    showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
-                });
+                performTokenExchange(code, clientId, clientSecret, redirectUri);
                 
-                // Clean up URL and local storage after processing
-                window.history.replaceState({}, document.title, redirectUri);
+                // Clean up local storage after processing
                 localStorage.removeItem('oauth_client_id');
                 localStorage.removeItem('oauth_client_secret');
             }
         }
 
+        function performTokenExchange(code, clientId, clientSecret, redirectUri) {
+            showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
+
+            const tokenUrl = 'https://oauth2.googleapis.com/token';
+            const data = new URLSearchParams();
+            data.append('client_id', clientId);
+            data.append('client_secret', clientSecret);
+            data.append('code', code);
+            data.append('grant_type', 'authorization_code');
+            data.append('redirect_uri', redirectUri);
+
+            fetch(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: data
+            })
+            .then(response => response.json())
+            .then(tokenData => {
+                if (tokenData.refresh_token) {
+                    document.getElementById('refresh_token_output').value = tokenData.refresh_token;
+                    showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
+                } else if (tokenData.error) {
+                    showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
+                    console.error("Token Error:", tokenData);
+                    // Handle the case where the code has been used (or is invalid)
+                    if (tokenData.error === 'invalid_grant') {
+                         showMessage("error", "❌ Token Error: यह कोड पहले ही उपयोग हो चुका है या अमान्य है। फिर से 'Authorize Blogger Access' पर क्लिक करें।");
+                    }
+                } else {
+                    showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
+                }
+            })
+            .catch(error => {
+                showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
+            });
+        }
+
         // Call callback handler on page load
         window.onload = function() {
             loadConfigToForm();
-            handleOAuthCallback();
+            handleOAuthCallback(); 
         };
     </script>
 </body>
