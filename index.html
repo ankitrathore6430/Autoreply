@@ -173,14 +173,13 @@
         <textarea id="keywords-textarea" placeholder="हर कीवर्ड एक नई लाइन में लिखें (उदाहरण: 'बेस्ट मोबाइल फ़ोन 2025', 'स्वादिष्ट ब्रेकफास्ट रेसिपी', 'मार्केटिंग टिप्स')"></textarea>
         <p class="hint">यह वह लिस्ट है जिसे ऑटो-ब्लॉगर इस्तेमाल करेगा। लिस्ट खत्म होने पर यह रीसेट हो सकती है।</p>
 
-        <button id="save-config-button">💾 कॉन्फ़िगरेशन सेव करें और GitHub पर अपलोड करें</button>
+        <button onclick="saveConfiguration()">💾 कॉन्फ़िगरेशन सेव करें और GitHub पर अपलोड करें</button>
         
         <hr style="margin-top: 30px; border: 0; border-top: 1px solid var(--border-color);">
 
-        <h2>🔑 Blogger OAuth 2.0 Token Generator</h2>
-        <p><b>स्टेप 1:</b> **Client ID** और **Client Secret** भरें।</p>
-        <p><b>स्टेप 2:</b> **Authorize** बटन पर क्लिक करें। Google लॉगिन के बाद, आपको URL में `code=` के बाद **Authorization Code** मिलेगा।</p>
-        
+        <h2>🔑 Blogger OAuth 2.0 Token Generator (Zapier Style)</h2>
+        <p><b>यह एक बार की प्रक्रिया है।</b> यह बटन Google लॉगिन खोलेगा, अनुमति मांगेगा, और सफलतापूर्वक अनुमति मिलने पर आपको Refresh Token देगा। इस Refresh Token को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** में सेव करें।</p>
+
         <div class="form-group">
             <label for="client_id">Google Client ID:</label>
             <input type="text" id="client_id" placeholder="Enter your Google Client ID" value="185826498092-51rjs9rlhpadfqtc6tsjv5hijcper0ah.apps.googleusercontent.com">
@@ -189,21 +188,13 @@
             <label for="client_secret">Google Client Secret:</label>
             <input type="text" id="client_secret" placeholder="Enter your Google Client Secret" value="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">
         </div>
-        <button id="auth-button" class="btn btn-primary auth-button">1. Authorize Blogger Access (Google Login)</button>
+        <button id="auth-button" class="btn btn-primary auth-button">1. Authorize Blogger Access</button>
 
-        <div class="manual-exchange" style="margin-top: 30px; border-top: 1px solid var(--border-color); padding-top: 20px;">
-            <h3>Manually Exchange Authorization Code (CRITICAL STEP)</h3>
-            <p class="hint">Google लॉगिन के बाद, आपका **Authorization Code** (जो `1//0g` से शुरू होता है) URL से **यहां स्वतः भर जाएगा**। इसे कॉपी करना अब आसान है।</p>
-            <div class="form-group">
-                <label for="auth_code_input">Authorization Code **(Copy करने के लिए):**</label>
-                <textarea id="auth_code_input" rows="3" placeholder="Google login ke baad, Authorization Code yahan dikhai dega. Agar yeh khaali hai, to URL se copy karke paste karein."></textarea>
-            </div>
-             <button id="exchange-token-button" class="btn btn-primary auth-button" style="background-color: #f44336;">2. Exchange Code for Refresh Token</button>
-        </div>
         <div class="token-result" style="margin-top: 20px;">
-            <h3>🔑 Generated Refresh Token (Copy This):</h3>
-            <textarea id="refresh_token_output" rows="3" placeholder="Your Refresh Token will appear here..."></textarea>
+            <h3>Generated Refresh Token:</h3>
+            <textarea id="refresh_token_output" rows="3" readonly placeholder="Your Refresh Token will appear here..."></textarea>
             <p style="color: red; font-weight: bold;">⚠️ इस टोकन को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** नाम से सेव करें।</p>
+            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL (`https://ankitrathore6430.github.io/Autoreply/`) Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
         </div>
 
 
@@ -213,24 +204,30 @@
     <script>
         // --- कॉन्फ़िगरेशन (यह कोड आपकी GitHub जानकारी का उपयोग करेगा) ---
         const REPO_OWNER = 'ankitrathore6430'; 
-        const REPO_NAME = 'AutoBloggerAnkit'; 
+        const REPO_NAME = 'Auto-Blogger'; 
         const FILE_PATH = 'config.json';
         const BRANCH = 'main'; 
-        
-        // --- Utility Functions ---
 
-        function showMessage(type, message) {
-            const statusDiv = document.getElementById('status-message');
-            statusDiv.textContent = message;
-            statusDiv.className = type;
-            statusDiv.style.display = 'block';
-            
-            setTimeout(() => {
-                statusDiv.style.display = 'none';
-            }, 8000); 
-        }
+        // PAT को ब्राउज़र के Local Storage से लोड करें
+        document.getElementById('pat-input').value = localStorage.getItem('github_pat') || '';
 
-        // --- GitHub Config Logic (Core functions) ---
+        document.getElementById('schedule-select').addEventListener('change', function() {
+            const minutesInput = document.getElementById('minutes-input');
+            switch(this.value) {
+                case 'hourly':
+                    minutesInput.value = 60;
+                    break;
+                case 'daily':
+                    minutesInput.value = 1440; 
+                    break;
+                case 'weekly':
+                    minutesInput.value = 10080; 
+                    break;
+                case 'custom':
+                default:
+                    break;
+            }
+        });
 
         async function fetchConfig() {
             const pat = document.getElementById('pat-input').value;
@@ -242,12 +239,6 @@
 
                 if (!contentResponse.ok) {
                     const errorDetails = await contentResponse.json();
-                    
-                    if (contentResponse.status === 404) {
-                         showMessage("info", "config.json फ़ाइल नहीं मिली। पहली बार सेव करने पर यह बन जाएगी।");
-                         // Return a base object for new config creation if 404
-                         return { content: JSON.stringify({ keywords: [], original_keywords: [], minutes_to_wait: 1440, loop_keywords: true, publish_immediately: true, schedule_type: 'daily' }, null, 4), sha: null };
-                    }
                     throw new Error(`Failed to fetch config: ${contentResponse.status} - ${errorDetails.message || contentResponse.statusText}`);
                 }
 
@@ -258,7 +249,11 @@
 
             } catch (error) {
                 console.error("Fetch Error:", error);
-                showMessage("error", `फ़ाइल पढ़ने में त्रुटि: ${error.message}`);
+                if (error.message.includes('404')) {
+                    showMessage("error", "config.json फ़ाइल नहीं मिली। Repo में फ़ाइल बनाएँ।");
+                } else {
+                     showMessage("error", `फ़ाइल पढ़ने में त्रुटि: ${error.message}`);
+                }
                 return null;
             }
         }
@@ -279,12 +274,12 @@
 
                     document.getElementById('keywords-textarea').value = keywords_to_show.join('\n');
                     
-                    if (document.getElementById('pat-input').value && result.sha) {
-                       showMessage("success", "✅ कॉन्फ़िगरेशन सफलतापूर्वक लोड हो गया है।");
-                    }
+                    showMessage("success", "✅ कॉन्फ़िगरेशन लोड हो गया है।");
                 } catch (e) {
-                     showMessage("error", `JSON फ़ाइल का फ़ॉर्मेट गलत है।`);
+                     showMessage("error", "JSON फ़ाइल का फ़ॉर्मेट गलत है।");
                 }
+            } else if (document.getElementById('pat-input').value) {
+                 // Error message is already handled in fetchConfig
             }
         }
 
@@ -297,7 +292,7 @@
             if (!pat) { showMessage("error", "GitHub PAT दर्ज करें।"); return; }
             if (isNaN(minutesToWait) || minutesToWait < 1) { showMessage("error", "मिनट में सही संख्या (कम से कम 1) दर्ज करें।"); return; }
             
-            localStorage.setItem('github_pat', pat); 
+            localStorage.setItem('github_pat', pat); // PAT को लोकल स्टोरेज में सेव करें
 
             const result = await fetchConfig();
             if (!result) return;
@@ -329,9 +324,7 @@
                 publish_immediately: publishImmediately, 
                 loop_keywords: loopKeywords, 
                 original_keywords: originalKeywords, 
-                keywords: newKeywords,
-                last_posted_time: oldConfig.last_posted_time || null, 
-                last_keyword_index: oldConfig.last_keyword_index || 0,
+                keywords: newKeywords 
             };
 
             const content = JSON.stringify(newConfig, null, 4);
@@ -341,12 +334,9 @@
             const data = {
                 message: "Update config.json from Control Panel",
                 content: base64Content,
+                sha: result.sha, 
                 branch: BRANCH
             };
-            
-            if (result.sha) {
-                data.sha = result.sha;
-            }
 
             try {
                 const response = await fetch(url, {
@@ -360,7 +350,6 @@
 
                 if (response.ok) {
                     showMessage("success", "✅ कॉन्फ़िगरेशन सफलतापूर्वक सेव हो गया है!");
-                    loadConfigToForm();
                 } else {
                     const errorData = await response.json();
                     throw new Error(`GitHub API Error: ${response.status} - ${errorData.message || 'Unknown error'}`);
@@ -370,146 +359,109 @@
                 showMessage("error", `❌ सेव करने में त्रुटि: ${error.message}`);
             }
         }
+
+        function showMessage(type, message) {
+            const statusDiv = document.getElementById('status-message');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+            statusDiv.style.display = 'block';
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 8000); 
+        }
         
         // --- OAuth 2.0 Flow Functions ---
 
-        // 2. Core Exchange Function 
-        function performTokenExchange(code, clientId, clientSecret, redirectUri) {
-            showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
-
-            const tokenUrl = 'https://oauth2.googleapis.com/token';
-            const data = new URLSearchParams();
-            data.append('client_id', clientId);
-            data.append('client_secret', clientSecret);
-            data.append('code', code);
-            data.append('grant_type', 'authorization_code');
-            data.append('redirect_uri', redirectUri);
-
-            fetch(tokenUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: data
-            })
-            .then(response => response.json())
-            .then(tokenData => {
-                if (tokenData.refresh_token) {
-                    document.getElementById('refresh_token_output').value = tokenData.refresh_token;
-                    document.getElementById('auth_code_input').value = ''; 
-                    showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
-                } else if (tokenData.error) {
-                    showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
-                    console.error("Token Error:", tokenData);
-                } else {
-                    showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
-                }
-            })
-            .catch(error => {
-                showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
-            });
-        }
-        
-        // 3. Manual Exchange Trigger
-        function triggerManualExchange() {
-            const authCode = document.getElementById('auth_code_input').value.trim();
-            if (!authCode) {
-                showMessage("error", "❌ Kripya Authorization Code (jo 1//0g se shuru hota hai) paste karein.");
+        // 1. Redirect to Google Login
+        document.getElementById('auth-button').addEventListener('click', () => {
+            const clientId = document.getElementById('client_id').value;
+            const secret = document.getElementById('client_secret').value;
+            
+            if (!clientId || !secret) {
+                showMessage("error", "❌ Client ID and Secret are required.");
                 return;
             }
             
-            let clientId = document.getElementById('client_id').value;
-            let clientSecret = document.getElementById('client_secret').value;
+            // Save to local storage for the next step (exchange code)
+            localStorage.setItem('oauth_client_id', clientId);
+            localStorage.setItem('oauth_client_secret', secret);
             
-            if (!clientId || !clientSecret) {
-                showMessage("error", "❌ Client ID and Secret are required for exchange. Kripya upar bharein.");
-                return;
-            }
+            // NOTE: The redirect URI used here must match an Authorized redirect URI in Google Console.
+            // Current URL must be: https://ankitrathore6430.github.io/Autoreply/
+            const redirectUri = window.location.href.split('?')[0]; 
+            const scope = 'https://www.googleapis.com/auth/blogger';
             
-            const redirectUri = window.location.href.split('?')[0].split('#')[0]; 
-            
-            performTokenExchange(authCode, clientId, clientSecret, redirectUri);
-        }
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
+                            `client_id=${clientId}&` +
+                            `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+                            `response_type=code&` +
+                            `scope=${encodeURIComponent(scope)}&` +
+                            `access_type=offline&` + // CRITICAL: This ensures we get a Refresh Token
+                            `prompt=consent`; // CRITICAL: Ensures refresh token is issued every time
+                            
+            window.location.href = authUrl;
+        });
 
-        // 4. Automatic Code Sniffing (Fills the textarea with the code from the URL)
+        // 2. Exchange 'code' for 'refresh_token'
         function handleOAuthCallback() {
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
             
             if (code) {
-                document.getElementById('auth_code_input').value = code;
-                showMessage("info", "Authorization Code mil gaya hai. Kripya 'Exchange Code' button dabayein.");
+                const clientId = localStorage.getItem('oauth_client_id');
+                const clientSecret = localStorage.getItem('oauth_client_secret');
+                const redirectUri = window.location.href.split('?')[0]; // Current URL without query params
                 
-                // Clear the code from the URL so it's not reused on refresh
-                const redirectUri = window.location.href.split('?')[0].split('#')[0]; 
-                window.history.replaceState({}, document.title, redirectUri);
-            }
-        }
-        
-        // --- Initialization (DOM READY: All listeners are attached here) ---
-        window.onload = function() {
-            // 1. Load PAT from local storage
-            document.getElementById('pat-input').value = localStorage.getItem('github_pat') || '';
-
-            // 2. Load Configuration from GitHub
-            loadConfigToForm();
-            
-            // 3. Check for Auth Code in URL
-            handleOAuthCallback(); 
-
-            // 4. Attach Event Listeners to all buttons and selectors
-
-            // Save Configuration Button Listener
-            document.getElementById('save-config-button').addEventListener('click', saveConfiguration);
-
-            // Schedule Select Listener
-            document.getElementById('schedule-select').addEventListener('change', function() {
-                const minutesInput = document.getElementById('minutes-input');
-                switch(this.value) {
-                    case 'hourly':
-                        minutesInput.value = 60;
-                        break;
-                    case 'daily':
-                        minutesInput.value = 1440; 
-                        break;
-                    case 'weekly':
-                        minutesInput.value = 10080; 
-                        break;
-                    case 'custom':
-                    default:
-                        break;
-                }
-            });
-
-            // Authorize Button Listener (1. Authorize)
-            document.getElementById('auth-button').addEventListener('click', () => {
-                const clientId = document.getElementById('client_id').value;
-                const secret = document.getElementById('client_secret').value;
-                
-                if (!clientId || !secret) {
-                    showMessage("error", "❌ Client ID and Secret are required.");
+                if (!clientId || !clientSecret) {
+                    showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
                     return;
                 }
                 
-                localStorage.setItem('oauth_client_id', clientId);
-                localStorage.setItem('oauth_client_secret', secret);
+                showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
+
+                const tokenUrl = 'https://oauth2.googleapis.com/token';
+                const data = new URLSearchParams();
+                data.append('client_id', clientId);
+                data.append('client_secret', clientSecret);
+                data.append('code', code);
+                data.append('grant_type', 'authorization_code');
+                data.append('redirect_uri', redirectUri);
+
+                fetch(tokenUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: data
+                })
+                .then(response => response.json())
+                .then(tokenData => {
+                    if (tokenData.refresh_token) {
+                        document.getElementById('refresh_token_output').value = tokenData.refresh_token;
+                        showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
+                    } else if (tokenData.error) {
+                        showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
+                        console.error("Token Error:", tokenData);
+                    } else {
+                        showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
+                    }
+                })
+                .catch(error => {
+                    showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
+                });
                 
-                const redirectUri = window.location.href.split('?')[0].split('#')[0]; 
-                const scope = 'https://www.googleapis.com/auth/blogger';
-                
-                const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
-                                `client_id=${clientId}&` +
-                                `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-                                `response_type=code&` +
-                                `scope=${encodeURIComponent(scope)}&` +
-                                `access_type=offline&` + 
-                                `prompt=consent`; 
-                                
-                window.location.href = authUrl;
-            });
-            
-             // Exchange Token Button Listener (2. Exchange Code)
-            document.getElementById('exchange-token-button').addEventListener('click', triggerManualExchange);
+                // Clean up URL and local storage after processing
+                window.history.replaceState({}, document.title, redirectUri);
+                localStorage.removeItem('oauth_client_id');
+                localStorage.removeItem('oauth_client_secret');
+            }
+        }
+
+        // Call callback handler on page load
+        window.onload = function() {
+            loadConfigToForm();
+            handleOAuthCallback();
         };
     </script>
 </body>
