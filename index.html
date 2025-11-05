@@ -194,7 +194,7 @@
             <h3>Generated Refresh Token:</h3>
             <textarea id="refresh_token_output" rows="3" readonly placeholder="Your Refresh Token will appear here..."></textarea>
             <p style="color: red; font-weight: bold;">⚠️ इस टोकन को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** नाम से सेव करें।</p>
-            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL (`https://ankitrathore6430.github.io/Autoreply/`) Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
+            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है। आपका URL है: `https://ankitrathore6430.github.io/AutoBloggerAnkit/`</p>
         </div>
 
 
@@ -204,12 +204,24 @@
     <script>
         // --- कॉन्फ़िगरेशन (यह कोड आपकी GitHub जानकारी का उपयोग करेगा) ---
         const REPO_OWNER = 'ankitrathore6430'; 
-        // ✅ UPDATED: New repository name
-        const REPO_NAME = 'AutoBloggerAnkit'; 
+        const REPO_NAME = 'AutoBloggerAnkit'; // Your new repo name
         const FILE_PATH = 'config.json';
         const BRANCH = 'main'; 
+        
+        // --- Utility Functions ---
 
-        // PAT को ब्राउज़र के Local Storage से लोड करें
+        function showMessage(type, message) {
+            const statusDiv = document.getElementById('status-message');
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+            statusDiv.style.display = 'block';
+            
+            setTimeout(() => {
+                statusDiv.style.display = 'none';
+            }, 8000); 
+        }
+
+        // --- GitHub Config Logic ---
         document.getElementById('pat-input').value = localStorage.getItem('github_pat') || '';
 
         document.getElementById('schedule-select').addEventListener('change', function() {
@@ -360,19 +372,8 @@
                 showMessage("error", `❌ सेव करने में त्रुटि: ${error.message}`);
             }
         }
-
-        function showMessage(type, message) {
-            const statusDiv = document.getElementById('status-message');
-            statusDiv.textContent = message;
-            statusDiv.className = type;
-            statusDiv.style.display = 'block';
-            
-            setTimeout(() => {
-                statusDiv.style.display = 'none';
-            }, 8000); 
-        }
         
-        // --- OAuth 2.0 Flow Functions ---
+        // --- OAuth 2.0 Flow Functions (CRITICAL: Added the missing logic here) ---
 
         // 1. Redirect to Google Login
         document.getElementById('auth-button').addEventListener('click', () => {
@@ -384,12 +385,11 @@
                 return;
             }
             
-            // Save to local storage for the next step (exchange code)
             localStorage.setItem('oauth_client_id', clientId);
             localStorage.setItem('oauth_client_secret', secret);
             
-            // NOTE: The redirect URI used here must match an Authorized redirect URI in Google Console.
-            const redirectUri = window.location.href.split('?')[0]; 
+            // CRITICAL: Construct the correct redirect URI for the exchange
+            const redirectUri = window.location.href.split('?')[0].split('#')[0]; 
             const scope = 'https://www.googleapis.com/auth/blogger';
             
             const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + 
@@ -409,27 +409,19 @@
             const code = urlParams.get('code');
             
             if (code) {
-                // If the code is present, remove it from the URL to prevent re-exchange on refresh
-                const redirectUri = window.location.href.split('?')[0]; 
+                const redirectUri = window.location.href.split('?')[0].split('#')[0]; 
                 window.history.replaceState({}, document.title, redirectUri);
                 
-                let clientId = localStorage.getItem('oauth_client_id');
-                let clientSecret = localStorage.getItem('oauth_client_secret');
+                let clientId = localStorage.getItem('oauth_client_id') || document.getElementById('client_id').value;
+                let clientSecret = localStorage.getItem('oauth_client_secret') || document.getElementById('client_secret').value;
                 
                 if (!clientId || !clientSecret) {
-                    // Fallback to pre-filled values if local storage is cleared
-                    clientId = document.getElementById('client_id').value;
-                    clientSecret = document.getElementById('client_secret').value;
-                    
-                    if (!clientId || !clientSecret) {
-                        showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
-                        return;
-                    }
+                    showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing.");
+                    return;
                 }
                 
                 performTokenExchange(code, clientId, clientSecret, redirectUri);
                 
-                // Clean up local storage after processing
                 localStorage.removeItem('oauth_client_id');
                 localStorage.removeItem('oauth_client_secret');
             }
@@ -461,10 +453,6 @@
                 } else if (tokenData.error) {
                     showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
                     console.error("Token Error:", tokenData);
-                    // Handle the case where the code has been used (or is invalid)
-                    if (tokenData.error === 'invalid_grant') {
-                         showMessage("error", "❌ Token Error: यह कोड पहले ही उपयोग हो चुका है या अमान्य है। फिर से 'Authorize Blogger Access' पर क्लिक करें।");
-                    }
                 } else {
                     showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
                 }
@@ -473,8 +461,8 @@
                 showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
             });
         }
-
-        // Call callback handler on page load
+        
+        // --- Initialization ---
         window.onload = function() {
             loadConfigToForm();
             handleOAuthCallback(); 
