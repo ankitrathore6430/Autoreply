@@ -168,7 +168,26 @@
             </div>
         </div>
 
-
+        <div class="option-group">
+            <div>
+                <label for="post-language-select">🌐 पोस्ट की भाषा (Post Language):</label>
+                <select id="post-language-select">
+                    <option value="HINDI" selected>Hindi (हिन्दी)</option>
+                    <option value="ENGLISH">English</option>
+                    <option value="HINGLISH">Hinglish (Hindi + English Mix)</option>
+                </select>
+                <p class="hint">चुनें कि AI कंटेंट किस भाषा में जनरेट करेगा।</p>
+            </div>
+            <div>
+                <label for="image-generator-select">🖼️ इमेज सोर्स (Image Generator):</label>
+                <select id="image-generator-select">
+                    <option value="PEXELS" selected>Pexels (Free Stock Photos)</option>
+                    <option value="OPENAI_DALLE">OpenAI DALL-E (AI Image)</option>
+                    <option value="GEMINI_IMAGEN">Gemini Imagen (AI Image)</option>
+                </select>
+                <p class="hint">चुनें कि इमेज कहाँ से लाई जाए (DALL-E ज़्यादातर सीधा URL देता है)।</p>
+            </div>
+        </div>
         <label for="keywords-textarea">📝 कीवर्ड्स लिस्ट (Keywords List):</label>
         <textarea id="keywords-textarea" placeholder="हर कीवर्ड एक नई लाइन में लिखें (उदाहरण: 'बेस्ट मोबाइल फ़ोन 2025', 'स्वादिष्ट ब्रेकफास्ट रेसिपी', 'मार्केटिंग टिप्स')"></textarea>
         <p class="hint">यह वह लिस्ट है जिसे ऑटो-ब्लॉगर इस्तेमाल करेगा। लिस्ट खत्म होने पर यह रीसेट हो सकती है।</p>
@@ -204,7 +223,7 @@
     <script>
         // --- कॉन्फ़िगरेशन (यह कोड आपकी GitHub जानकारी का उपयोग करेगा) ---
         const REPO_OWNER = 'ankitrathore6430'; 
-        const REPO_NAME = 'Auto-Blogger'; 
+        const REPO_NAME = 'AutoBloggerAnkit'; 
         const FILE_PATH = 'config.json';
         const BRANCH = 'main'; 
 
@@ -268,6 +287,10 @@
                     document.getElementById('post-status-select').value = config.publish_immediately === false ? 'false' : 'true'; 
                     document.getElementById('keyword-loop-checkbox').checked = config.loop_keywords === true; 
                     
+                    // 💥 NEW: Load Language and Image Generator Settings
+                    document.getElementById('post-language-select').value = config.post_language || 'HINDI';
+                    document.getElementById('image-generator-select').value = config.image_generator_ai || 'PEXELS';
+                    
                     const keywords_to_show = config.original_keywords && config.original_keywords.length > 0 
                                              ? config.original_keywords 
                                              : (config.keywords || []);
@@ -288,6 +311,10 @@
             const minutesToWait = parseInt(document.getElementById('minutes-input').value);
             const publishImmediately = document.getElementById('post-status-select').value === 'true';
             const loopKeywords = document.getElementById('keyword-loop-checkbox').checked;
+            
+            // 💥 NEW: Read Language and Image Generator Settings
+            const postLanguage = document.getElementById('post-language-select').value;
+            const imageGenerator = document.getElementById('image-generator-select').value;
 
             if (!pat) { showMessage("error", "GitHub PAT दर्ज करें।"); return; }
             if (isNaN(minutesToWait) || minutesToWait < 1) { showMessage("error", "मिनट में सही संख्या (कम से कम 1) दर्ज करें।"); return; }
@@ -323,6 +350,8 @@
                 minutes_to_wait: minutesToWait,
                 publish_immediately: publishImmediately, 
                 loop_keywords: loopKeywords, 
+                post_language: postLanguage,         // <-- NEW
+                image_generator_ai: imageGenerator,  // <-- NEW
                 original_keywords: originalKeywords, 
                 keywords: newKeywords 
             };
@@ -388,7 +417,6 @@
             localStorage.setItem('oauth_client_secret', secret);
             
             // NOTE: The redirect URI used here must match an Authorized redirect URI in Google Console.
-            // Current URL must be: https://ankitrathore6430.github.io/Autoreply/
             const redirectUri = window.location.href.split('?')[0]; 
             const scope = 'https://www.googleapis.com/auth/blogger';
             
@@ -409,59 +437,75 @@
             const code = urlParams.get('code');
             
             if (code) {
-                const clientId = localStorage.getItem('oauth_client_id');
-                const clientSecret = localStorage.getItem('oauth_client_secret');
-                const redirectUri = window.location.href.split('?')[0]; // Current URL without query params
+                // If the code is present, remove it from the URL to prevent re-exchange on refresh
+                const redirectUri = window.location.href.split('?')[0]; 
+                window.history.replaceState({}, document.title, redirectUri);
+                
+                let clientId = localStorage.getItem('oauth_client_id');
+                let clientSecret = localStorage.getItem('oauth_client_secret');
                 
                 if (!clientId || !clientSecret) {
-                    showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
-                    return;
+                    // Fallback to pre-filled values if local storage is cleared
+                    clientId = document.getElementById('client_id').value;
+                    clientSecret = document.getElementById('client_secret').value;
+                    
+                    if (!clientId || !clientSecret) {
+                        showMessage("error", "❌ Cannot exchange code. Client ID/Secret missing from storage.");
+                        return;
+                    }
                 }
                 
-                showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
-
-                const tokenUrl = 'https://oauth2.googleapis.com/token';
-                const data = new URLSearchParams();
-                data.append('client_id', clientId);
-                data.append('client_secret', clientSecret);
-                data.append('code', code);
-                data.append('grant_type', 'authorization_code');
-                data.append('redirect_uri', redirectUri);
-
-                fetch(tokenUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    body: data
-                })
-                .then(response => response.json())
-                .then(tokenData => {
-                    if (tokenData.refresh_token) {
-                        document.getElementById('refresh_token_output').value = tokenData.refresh_token;
-                        showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
-                    } else if (tokenData.error) {
-                        showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
-                        console.error("Token Error:", tokenData);
-                    } else {
-                        showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
-                    }
-                })
-                .catch(error => {
-                    showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
-                });
+                performTokenExchange(code, clientId, clientSecret, redirectUri);
                 
-                // Clean up URL and local storage after processing
-                window.history.replaceState({}, document.title, redirectUri);
+                // Clean up local storage after processing
                 localStorage.removeItem('oauth_client_id');
                 localStorage.removeItem('oauth_client_secret');
             }
         }
 
+        function performTokenExchange(code, clientId, clientSecret, redirectUri) {
+            showMessage("info", "🔄 Exchanging authorization code for Refresh Token...");
+
+            const tokenUrl = 'https://oauth2.googleapis.com/token';
+            const data = new URLSearchParams();
+            data.append('client_id', clientId);
+            data.append('client_secret', clientSecret);
+            data.append('code', code);
+            data.append('grant_type', 'authorization_code');
+            data.append('redirect_uri', redirectUri);
+
+            fetch(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: data
+            })
+            .then(response => response.json())
+            .then(tokenData => {
+                if (tokenData.refresh_token) {
+                    document.getElementById('refresh_token_output').value = tokenData.refresh_token;
+                    showMessage("success", "✅ Refresh Token सफलतापूर्वक जनरेट हो गया है! इसे GitHub Secrets में सेव करें।");
+                } else if (tokenData.error) {
+                    showMessage("error", `❌ Token Error: ${tokenData.error_description || tokenData.error}`);
+                    console.error("Token Error:", tokenData);
+                    // Handle the case where the code has been used (or is invalid)
+                    if (tokenData.error === 'invalid_grant') {
+                         showMessage("error", "❌ Token Error: यह कोड पहले ही उपयोग हो चुका है या अमान्य है। फिर से 'Authorize Blogger Access' पर क्लिक करें।");
+                    }
+                } else {
+                    showMessage("error", "❌ Refresh Token प्राप्त नहीं हुआ। (संभवतः कोड पहले ही उपयोग हो चुका है)");
+                }
+            })
+            .catch(error => {
+                showMessage("error", `❌ Network Error during token exchange: ${error.message}`);
+            });
+        }
+
         // Call callback handler on page load
         window.onload = function() {
             loadConfigToForm();
-            handleOAuthCallback();
+            handleOAuthCallback(); 
         };
     </script>
 </body>
