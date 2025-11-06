@@ -179,6 +179,16 @@
                 <p class="hint">चुनें कि AI कंटेंट किस भाषा में जनरेट करेगा।</p>
             </div>
             <div>
+                <label for="ai-writer-select">✍️ कंटेंट राइटर AI (Content Writer):</label>
+                <select id="ai-writer-select">
+                    <option value="GEMINI" selected>Google Gemini</option>
+                    <option value="CHATGPT">OpenAI ChatGPT</option>
+                </select>
+                <p class="hint">चुनें कि आर्टिकल कौन-सा AI मॉडल जनरेट करेगा।</p>
+            </div>
+        </div>
+        <div class="option-group">
+            <div>
                 <label for="image-generator-select">🖼️ इमेज सोर्स (Image Generator):</label>
                 <select id="image-generator-select">
                     <option value="PEXELS" selected>Pexels (Free Stock Photos)</option>
@@ -187,7 +197,10 @@
                 </select>
                 <p class="hint">चुनें कि इमेज कहाँ से लाई जाए (DALL-E ज़्यादातर सीधा URL देता है)।</p>
             </div>
+            <div>
+                </div>
         </div>
+
         <label for="keywords-textarea">📝 कीवर्ड्स लिस्ट (Keywords List):</label>
         <textarea id="keywords-textarea" placeholder="हर कीवर्ड एक नई लाइन में लिखें (उदाहरण: 'बेस्ट मोबाइल फ़ोन 2025', 'स्वादिष्ट ब्रेकफास्ट रेसिपी', 'मार्केटिंग टिप्स')"></textarea>
         <p class="hint">यह वह लिस्ट है जिसे ऑटो-ब्लॉगर इस्तेमाल करेगा। लिस्ट खत्म होने पर यह रीसेट हो सकती है।</p>
@@ -213,7 +226,7 @@
             <h3>Generated Refresh Token:</h3>
             <textarea id="refresh_token_output" rows="3" readonly placeholder="Your Refresh Token will appear here..."></textarea>
             <p style="color: red; font-weight: bold;">⚠️ इस टोकन को कॉपी करके GitHub Secrets में **`BLOGGER_REFRESH_TOKEN`** नाम से सेव करें।</p>
-            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL (`https://ankitrathore6430.github.io/Autoreply/`) Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
+            <p class="hint">**महत्वपूर्ण:** सुनिश्चित करें कि आपका GitHub Pages URL (`https://ankitrathore6430.github.io/Autoreply/` या आपका सही Repo URL) Google Cloud Console में **Authorized redirect URI** के रूप में जोड़ा गया है।</p>
         </div>
 
 
@@ -248,6 +261,7 @@
             }
         });
 
+        // 🟢 फंक्शन 1: GitHub से config.json को FETCH करता है
         async function fetchConfig() {
             const pat = document.getElementById('pat-input').value;
             if (!pat) return null;
@@ -264,6 +278,7 @@
                 const contentData = await contentResponse.json();
                 const decodedContent = atob(contentData.content);
                 
+                // SHA को रिटर्न करना महत्वपूर्ण है ताकि हम फ़ाइल को अपडेट कर सकें
                 return { content: decodedContent, sha: contentData.sha };
 
             } catch (error) {
@@ -277,6 +292,7 @@
             }
         }
 
+        // 🟢 फंक्शन 2: Fetched config को फॉर्म में लोड करता है
         async function loadConfigToForm() {
             const result = await fetchConfig();
             if (result) {
@@ -287,9 +303,12 @@
                     document.getElementById('post-status-select').value = config.publish_immediately === false ? 'false' : 'true'; 
                     document.getElementById('keyword-loop-checkbox').checked = config.loop_keywords === true; 
                     
-                    // 💥 NEW: Load Language and Image Generator Settings
+                    // लोड पुरानी सेटिंग्स
                     document.getElementById('post-language-select').value = config.post_language || 'HINDI';
                     document.getElementById('image-generator-select').value = config.image_generator_ai || 'PEXELS';
+                    
+                    // लोड नई सेटिंग (AI Writer)
+                    document.getElementById('ai-writer-select').value = config.ai_writer_source || 'GEMINI'; 
                     
                     const keywords_to_show = config.original_keywords && config.original_keywords.length > 0 
                                              ? config.original_keywords 
@@ -306,15 +325,19 @@
             }
         }
 
+        // 🔴 फंक्शन 3: फॉर्म से डेटा लेता है और GitHub पर UPDATE (PUT) करता है
         async function saveConfiguration() {
             const pat = document.getElementById('pat-input').value;
             const minutesToWait = parseInt(document.getElementById('minutes-input').value);
             const publishImmediately = document.getElementById('post-status-select').value === 'true';
             const loopKeywords = document.getElementById('keyword-loop-checkbox').checked;
             
-            // 💥 NEW: Read Language and Image Generator Settings
+            // पुरानी सेटिंग्स पढ़ें
             const postLanguage = document.getElementById('post-language-select').value;
             const imageGenerator = document.getElementById('image-generator-select').value;
+            
+            // नई सेटिंग पढ़ें (AI Writer)
+            const aiWriterSource = document.getElementById('ai-writer-select').value; 
 
             if (!pat) { showMessage("error", "GitHub PAT दर्ज करें।"); return; }
             if (isNaN(minutesToWait) || minutesToWait < 1) { showMessage("error", "मिनट में सही संख्या (कम से कम 1) दर्ज करें।"); return; }
@@ -333,43 +356,49 @@
             let originalKeywords = keywordsArray;
             let newKeywords = oldConfig.keywords || [];
 
+            // अगर यूजर ने keywords की लिस्ट बदली है, तो keywords और original_keywords दोनों को नई लिस्ट से बदल दें।
             if (JSON.stringify(originalKeywords) !== JSON.stringify(oldConfig.original_keywords)) {
                 newKeywords = originalKeywords;
             } else {
+                // अगर लिस्ट नहीं बदली है, तो 'keywords' को वही रहने दें जो स्क्रिप्ट ने पिछली बार अपडेट किया था।
                 newKeywords = oldConfig.keywords; 
             }
             
+            // अगर keywords लिस्ट खाली है और loop_keywords ऑन है, तो लिस्ट को रीसेट करें
             if (newKeywords.length === 0 && loopKeywords) {
                 newKeywords = originalKeywords;
             }
 
 
             const newConfig = {
+                // पुरानी सेटिंग्स को कॉपी करें ताकि last_posted_time जैसी चीजें न बदलें
                 ...oldConfig, 
                 schedule_type: document.getElementById('schedule-select').value,
                 minutes_to_wait: minutesToWait,
                 publish_immediately: publishImmediately, 
                 loop_keywords: loopKeywords, 
-                post_language: postLanguage,         // <-- NEW
-                image_generator_ai: imageGenerator,  // <-- NEW
+                post_language: postLanguage,      
+                ai_writer_source: aiWriterSource,     // नई AI Writer सेटिंग
+                image_generator_ai: imageGenerator,  
                 original_keywords: originalKeywords, 
-                keywords: newKeywords 
+                keywords: newKeywords // यह वह लिस्ट है जिसे script.py इस्तेमाल करेगा।
             };
 
             const content = JSON.stringify(newConfig, null, 4);
+            // GitHub API के लिए content को Base64 में एन्कोड करें
             const base64Content = btoa(unescape(encodeURIComponent(content))); 
 
             const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
             const data = {
                 message: "Update config.json from Control Panel",
                 content: base64Content,
-                sha: result.sha, 
+                sha: result.sha, // GitHub को पता होना चाहिए कि वह किस version को बदल रहा है
                 branch: BRANCH
             };
 
             try {
                 const response = await fetch(url, {
-                    method: 'PUT',
+                    method: 'PUT', // PUT request फ़ाइल को अपडेट करने के लिए
                     headers: {
                         'Authorization': `token ${pat}`,
                         'Content-Type': 'application/json'
@@ -400,7 +429,7 @@
             }, 8000); 
         }
         
-        // --- OAuth 2.0 Flow Functions ---
+        // --- OAuth 2.0 Flow Functions (Blogger Refresh Token Generator) ---
 
         // 1. Redirect to Google Login
         document.getElementById('auth-button').addEventListener('click', () => {
