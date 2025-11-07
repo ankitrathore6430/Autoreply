@@ -192,7 +192,7 @@
                 <label for="image-generator-select">🖼️ इमेज सोर्स (Image Generator):</label>
                 <select id="image-generator-select">
                     <option value="PEXELS" selected>Pexels (Free Stock Photos)</option>
-                    <option value="OPENAI_DALLE">OpenAI DALL-E (AI Image)</option>
+                    <option value="UNSPLASH">Unsplash (Free Stock Photos)</option> <option value="OPENAI_DALLE">OpenAI DALL-E (AI Image)</option>
                     <option value="GEMINI_IMAGEN">Gemini Imagen (AI Image)</option>
                 </select>
                 <p class="hint">चुनें कि इमेज कहाँ से लाई जाए (DALL-E ज़्यादातर सीधा URL देता है)।</p>
@@ -305,7 +305,23 @@
                     
                     // लोड पुरानी सेटिंग्स
                     document.getElementById('post-language-select').value = config.post_language || 'HINDI';
-                    document.getElementById('image-generator-select').value = config.image_generator_ai || 'PEXELS';
+                    
+                    // इमेज जनरेटर लोड करते समय यह सुनिश्चित करें कि `UNSPLASH` को सही ढंग से संभाला जाए
+                    const imageGeneratorValue = config.image_generator_ai || 'PEXELS';
+                    const imageGeneratorSelect = document.getElementById('image-generator-select');
+                    
+                    // यदि config.json में कोई नया/अज्ञात मूल्य है, तो भी इसे सेट करने का प्रयास करें
+                    let optionFound = false;
+                    for (let i = 0; i < imageGeneratorSelect.options.length; i++) {
+                        if (imageGeneratorSelect.options[i].value === imageGeneratorValue) {
+                            imageGeneratorSelect.value = imageGeneratorValue;
+                            optionFound = true;
+                            break;
+                        }
+                    }
+                    if (!optionFound) {
+                        imageGeneratorSelect.value = 'PEXELS'; // Fallback
+                    }
                     
                     // लोड नई सेटिंग (AI Writer)
                     document.getElementById('ai-writer-select').value = config.ai_writer_source || 'GEMINI'; 
