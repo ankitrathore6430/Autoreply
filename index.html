@@ -198,7 +198,10 @@
                 <p class="hint">चुनें कि इमेज कहाँ से लाई जाए (DALL-E ज़्यादातर सीधा URL देता है)।</p>
             </div>
             <div>
-                </div>
+                <label for="num-images-input">📸 पोस्ट में इमेज की संख्या:</label>
+                <input type="number" id="num-images-input" min="1" value="1" placeholder="इमेज की संख्या (1, 2, 5, आदि)">
+                <p class="hint">चुनें कि एक पोस्ट में कितनी फीचर इमेज जोड़ी जाएँ। (वर्तमान में केवल 1 इमेज ही Blogger पर फीचर इमेज बनती है।)</p>
+            </div>
         </div>
 
         <label for="keywords-textarea">📝 कीवर्ड्स लिस्ट (Keywords List):</label>
@@ -326,6 +329,9 @@
                     // लोड नई सेटिंग (AI Writer)
                     document.getElementById('ai-writer-select').value = config.ai_writer_source || 'GEMINI'; 
                     
+                    // ✅ New: Load Number of Images
+                    document.getElementById('num-images-input').value = config.number_of_images || 1; 
+
                     const keywords_to_show = config.original_keywords && config.original_keywords.length > 0 
                                              ? config.original_keywords 
                                              : (config.keywords || []);
@@ -354,9 +360,14 @@
             
             // नई सेटिंग पढ़ें (AI Writer)
             const aiWriterSource = document.getElementById('ai-writer-select').value; 
+            
+            // ✅ New: Read Number of Images
+            const numberOfImages = parseInt(document.getElementById('num-images-input').value);
 
             if (!pat) { showMessage("error", "GitHub PAT दर्ज करें।"); return; }
             if (isNaN(minutesToWait) || minutesToWait < 1) { showMessage("error", "मिनट में सही संख्या (कम से कम 1) दर्ज करें।"); return; }
+            // ✅ New: Validation for number of images
+            if (isNaN(numberOfImages) || numberOfImages < 1) { showMessage("error", "इमेज की संख्या (कम से कम 1) दर्ज करें।"); return; }
             
             localStorage.setItem('github_pat', pat); // PAT को लोकल स्टोरेज में सेव करें
 
@@ -396,6 +407,8 @@
                 post_language: postLanguage,      
                 ai_writer_source: aiWriterSource,     // नई AI Writer सेटिंग
                 image_generator_ai: imageGenerator,  
+                // ✅ New: Save Number of Images
+                number_of_images: numberOfImages, 
                 original_keywords: originalKeywords, 
                 keywords: newKeywords // यह वह लिस्ट है जिसे script.py इस्तेमाल करेगा।
             };
